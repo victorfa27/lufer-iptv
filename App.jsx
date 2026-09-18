@@ -10,9 +10,15 @@ export default function App() {
   const [selected, setSelected] = useState(null);
   const [activeGroup, setActiveGroup] = useState("all");
   const [showFavorites, setShowFavorites] = useState(false);
+
   const [favorites, setFavorites] = useState(
     () => new Set(JSON.parse(localStorage.getItem("lufer-favorites") || "[]"))
   );
+
+  const [savedLists, setSavedLists] = useState(
+    () => JSON.parse(localStorage.getItem("lufer-lists") || "[]")
+  );
+
   const [search, setSearch] = useState("");
   const [url, setUrl] = useState("");
   const [message, setMessage] = useState("Carga una lista M3U para comenzar.");
@@ -52,7 +58,6 @@ export default function App() {
     try {
       const text = await file.text();
       const parsed = parseM3U(text);
-
       setChannels(parsed);
       setSelected(parsed[0] || null);
       setActiveGroup("all");
@@ -71,15 +76,83 @@ export default function App() {
 
     try {
       const parsed = await parseM3UUrl(url.trim());
-
       setChannels(parsed);
       setSelected(parsed[0] || null);
       setActiveGroup("all");
       setShowFavorites(false);
+      setSearch("");
       setMessage(`${parsed.length} canales cargados desde la URL.`);
     } catch (error) {
       setMessage(
         error.message || "No se pudo cargar la URL. Puede requerir CORS."
+      );
+    }
+  }
+
+  function saveList() {
+    const value = url.trim();
+
+    if (!value) {
+      setMessage("Primero pega una URL M3U.");
+      return;
+    }
+
+    const existing = savedLists.find((item) => item.url === value);
+
+    if (existing) {
+      setMessage(`La lista "${existing.name}" ya está guardada.`);
+      return;
+    }
+
+    const name = window.prompt(
+      "Nombre para esta lista:",
+      `Lista ${savedLists.length + 1}`
+    );
+
+    if (!name?.trim()) return;
+
+    const next = [
+      ...savedLists,
+      {
+        id: crypto.randomUUID(),
+        name: name.trim(),
+        url: value,
+      },
+    ];
+
+    setSavedLists(next);
+    localStorage.setItem("lufer-lists", JSON.stringify(next));
+    setMessage(`Lista "${name.trim()}" guardada correctamente.`);
+  }
+
+  function deleteList(id) {
+    const item = savedLists.find((list) => list.id === id);
+    if (!item) return;
+
+    const confirmed = window.confirm(`¿Eliminar la lista "${item.name}"?`);
+    if (!confirmed) return;
+
+    const next = savedLists.filter((list) => list.id !== id);
+    setSavedLists(next);
+    localStorage.setItem("lufer-lists", JSON.stringify(next));
+    setMessage(`Lista "${item.name}" eliminada.`);
+  }
+
+  async function loadSavedList(item) {
+    setUrl(item.url);
+    setMessage(`Cargando "${item.name}"...`);
+
+    try {
+      const parsed = await parseM3UUrl(item.url);
+      setChannels(parsed);
+      setSelected(parsed[0] || null);
+      setActiveGroup("all");
+      setShowFavorites(false);
+      setSearch("");
+      setMessage(`${parsed.length} canales cargados desde "${item.name}".`);
+    } catch (error) {
+      setMessage(
+        error.message || "No se pudo cargar la lista guardada."
       );
     }
   }
@@ -94,6 +167,9 @@ export default function App() {
         showFavorites={showFavorites}
         setShowFavorites={setShowFavorites}
         onFile={loadFile}
+        savedLists={savedLists}
+        onLoadSaved={loadSavedList}
+        onDeleteSaved={deleteList}
       />
 
       <main className="main">
@@ -114,12 +190,23 @@ export default function App() {
         <section className="url-box">
           <form onSubmit={loadUrl}>
             <Link2 size={18} />
+
             <input
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               placeholder="Pega aquí la URL de tu lista M3U..."
             />
+
             <button type="submit">Cargar lista</button>
+
+            <button
+              type="button"
+              className="save-list-button"
+              onClick={saveList}
+              disabled={!url.trim()}
+            >
+              Guardar
+            </button>
           </form>
         </section>
 
