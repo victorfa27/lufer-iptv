@@ -219,3 +219,215 @@ button { cursor: pointer; }
   .list-header { align-items:stretch; flex-direction:column; }
   .search-box { width:100%; }
 }
+
+
+
+/* =========================================================
+   LUFER IPTV V2.2 · Grid de canales
+   ========================================================= */
+
+.channel-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+  padding: 0 12px 14px;
+  max-height: 610px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: #26344d transparent;
+}
+
+.channel-grid::-webkit-scrollbar { width: 6px; }
+.channel-grid::-webkit-scrollbar-track { background: transparent; }
+.channel-grid::-webkit-scrollbar-thumb {
+  background: #26344d;
+  border-radius: 20px;
+}
+
+.channel-tile {
+  min-width: 0;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 12px;
+  background: #0d1422;
+  overflow: hidden;
+  cursor: pointer;
+  transition: transform .16s ease, border-color .16s ease, background .16s ease;
+}
+
+.channel-tile:hover {
+  transform: translateY(-2px);
+  border-color: rgba(137,151,255,.36);
+  background: #111a2b;
+}
+
+.channel-tile.selected {
+  border-color: rgba(137,151,255,.65);
+  box-shadow: 0 0 0 1px rgba(137,151,255,.12), 0 10px 28px rgba(0,0,0,.18);
+}
+
+.tile-logo-wrap {
+  position: relative;
+  height: 92px;
+  display: grid;
+  place-items: center;
+  padding: 13px;
+  background:
+    radial-gradient(circle at center, rgba(100,119,255,.09), transparent 62%),
+    #080d17;
+}
+
+.tile-logo-wrap img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  transition: transform .18s ease;
+}
+
+.channel-tile:hover .tile-logo-wrap img {
+  transform: scale(1.05);
+}
+
+.tile-logo-wrap.logo-failed::after {
+  content: "TV";
+  color: #6f7d97;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.tile-fallback {
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border-radius: 11px;
+  background: #151f32;
+  color: #8291ae;
+  font-size: 10px;
+  font-weight: 900;
+}
+
+.tile-play,
+.tile-favorite {
+  position: absolute;
+  width: 29px;
+  height: 29px;
+  display: grid;
+  place-items: center;
+  border: 1px solid rgba(255,255,255,.09);
+  border-radius: 50%;
+  opacity: 0;
+  transform: translateY(3px);
+  transition: .16s;
+}
+
+.tile-play {
+  left: 8px;
+  bottom: 8px;
+  color: #0a0e17;
+  background: #f5f7ff;
+}
+
+.tile-favorite {
+  right: 8px;
+  top: 8px;
+  color: #aeb9d0;
+  background: rgba(7,11,20,.82);
+  backdrop-filter: blur(8px);
+}
+
+.tile-favorite.active {
+  opacity: 1;
+  color: #aeb5ff;
+  border-color: rgba(140,151,255,.35);
+}
+
+.channel-tile:hover .tile-play,
+.channel-tile:hover .tile-favorite {
+  opacity: 1;
+  transform: translateY(0);
+}
+
+.tile-info {
+  min-width: 0;
+  padding: 9px 10px 10px;
+}
+
+.tile-info strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: #edf1ff;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.tile-info span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  margin-top: 3px;
+  color: #5f6c84;
+  font-size: 9px;
+}
+
+.empty-list {
+  grid-column: 1 / -1;
+  min-height: 180px;
+  display: grid;
+  place-items: center;
+  color: #66738b;
+  text-align: center;
+}
+
+@media (max-width: 1150px) {
+  .channel-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 700px) {
+  .channel-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 8px;
+    padding: 0 8px 10px;
+    max-height: none;
+    overflow-y: visible;
+  }
+
+  .tile-logo-wrap {
+    height: 86px;
+    padding: 11px;
+  }
+
+  .tile-play,
+  .tile-favorite {
+    opacity: 1;
+    transform: none;
+  }
+
+  .tile-play {
+    width: 27px;
+    height: 27px;
+  }
+
+  .tile-favorite {
+    width: 27px;
+    height: 27px;
+  }
+
+  .tile-info {
+    padding: 8px;
+  }
+
+  .tile-info strong {
+    font-size: 10px;
+  }
+
+  .tile-info span {
+    font-size: 8px;
+  }
+}
+
