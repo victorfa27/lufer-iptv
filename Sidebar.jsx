@@ -1,4 +1,12 @@
-import { Film, Folder, Heart, ListVideo, Upload } from "lucide-react";
+import {
+  Film,
+  Folder,
+  Heart,
+  ListVideo,
+  Upload,
+  Trash2,
+  Tv,
+} from "lucide-react";
 
 export default function Sidebar({
   groups,
@@ -33,47 +41,16 @@ export default function Sidebar({
         />
       </label>
 
-      {savedLists.length > 0 && (
-        <div className="saved-lists">
-          <div className="side-title">Mis listas</div>
-
-          {savedLists.map((item) => (
-            <div className="saved-list-item" key={item.id}>
-              <button
-                className="saved-list-load"
-                title={item.url}
-                onClick={() => onLoadSaved(item)}
-              >
-                <ListVideo size={15} />
-                <span>{item.name}</span>
-              </button>
-
-              <button
-                className="saved-list-delete"
-                title="Eliminar lista"
-                onClick={() => onDeleteSaved(item.id)}
-              >
-                ×
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      <nav>
+      <nav className="main-nav">
         <button
-          className={
-            !showFavorites && activeGroup === "all"
-              ? "nav-item active"
-              : "nav-item"
-          }
+          className={!showFavorites && activeGroup === "all" ? "nav-item active" : "nav-item"}
           onClick={() => {
             setShowFavorites(false);
             setActiveGroup("all");
           }}
         >
-          <ListVideo size={18} />
-          Todos
+          <Tv size={18} />
+          Inicio
         </button>
 
         <button
@@ -86,29 +63,60 @@ export default function Sidebar({
         </button>
       </nav>
 
-      <div className="side-title">
-        <Folder size={15} />
-        Categorías
+      <div className="side-section">
+        <div className="side-title"><ListVideo size={15} /> Mis listas</div>
+        {savedLists.length === 0 ? (
+          <div className="saved-empty">Tus listas guardadas aparecerán aquí.</div>
+        ) : (
+          <div className="saved-list-stack">
+            {savedLists.map((item) => (
+              <div className="saved-list-item" key={item.id}>
+                <button
+                  className="saved-list-load"
+                  title={item.url}
+                  onClick={() => onLoadSaved(item)}
+                >
+                  <span className="saved-list-icon"><ListVideo size={14} /></span>
+                  <span className="saved-list-text">
+                    <strong>{item.name}</strong>
+                    <small>{item.channels || 0} canales</small>
+                  </span>
+                </button>
+                <button
+                  className="saved-list-delete"
+                  title="Eliminar lista"
+                  onClick={() => onDeleteSaved(item.id)}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      <div className="group-list">
-        {groups.map((group) => (
-          <button
-            key={group}
-            className={
-              !showFavorites && activeGroup === group
-                ? "group-item active"
-                : "group-item"
-            }
-            onClick={() => {
-              setShowFavorites(false);
-              setActiveGroup(group);
-            }}
-          >
-            <Film size={15} />
-            <span>{group}</span>
-          </button>
-        ))}
+      <div className="side-section categories-section">
+        <div className="side-title"><Folder size={15} /> Categorías</div>
+        <div className="group-list">
+          {groups.map((group) => (
+            <button
+              key={group}
+              className={!showFavorites && activeGroup === group ? "group-item active" : "group-item"}
+              onClick={() => {
+                setShowFavorites(false);
+                setActiveGroup(group);
+              }}
+            >
+              <Film size={15} />
+              <span>{group}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="sidebar-footer">
+        <span>LUFER IPTV</span>
+        <small>V2 · Web Player</small>
       </div>
     </aside>
   );
