@@ -1,9 +1,7 @@
-import { useMemo, useState } from "react";
-import { Search, Settings2, Tv, Link2 } from "lucide-react";
-import Player from "./components/Player";
-import Sidebar from "./components/Sidebar";
-import ChannelList from "./components/ChannelList";
-import { parseM3U, parseM3UUrl } from "./services/m3uParser";
+import Player from "./Player";
+import Sidebar from "./Sidebar";
+import ChannelList from "./ChannelList";
+import { parseM3U, parseM3UUrl } from "./m3uParser";
 
 export default function App() {
   const [channels, setChannels] = useState([]);
