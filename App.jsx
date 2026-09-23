@@ -1,340 +1,211 @@
-import { useMemo, useState } from "react";
-import {
-  Heart,
-  Link2,
-  Search,
-  Settings2,
-  Tv,
-  Upload,
-  X,
-  RefreshCw,
-  Play,
-} from "lucide-react";
-import Player from "./Player";
-import Sidebar from "./Sidebar";
-import ChannelList from "./ChannelList";
+import "./styles-v3.css";
+import { useEffect, useMemo, useRef, useState } from "react";
+import Hls from "hls.js";
+import { Search, Tv, Film, Play, Heart, Clock3, ListVideo, RefreshCw, Menu, X } from "lucide-react";
 import { parseM3U, parseM3UUrl } from "./m3uParser";
+import {
+  getLiveChannels,
+  getMovies,
+  getSeries,
+  getSeasons,
+  getEpisodes,
+  getStreamUrl,
+  getImageUrl,
+} from "./emby";
+
+const LS_FAV = "lufer-v3-favorites";
+const LS_HISTORY = "lufer-v3-history";
+const LS_LISTS = "lufer-v3-lists";
+
+function readJSON(key, fallback) {
+  try { return JSON.parse(localStorage.getItem(key) || JSON.stringify(fallback)); }
+  catch { return fallback; }
+}
 
 export default function App() {
-  const [channels, setChannels] = useState([]);
+  const [section, setSection] = useState("home");
+  const [live, setLive] = useState([]);
+  const [movies, setMovies] = useState([]);
+  const [series, setSeries] = useState([]);
   const [selected, setSelected] = useState(null);
-  const [activeGroup, setActiveGroup] = useState("all");
-  const [showFavorites, setShowFavorites] = useState(false);
-  const [favorites, setFavorites] = useState(
-    () => new Set(JSON.parse(localStorage.getItem("lufer-favorites") || "[]"))
-  );
-  const [savedLists, setSavedLists] = useState(
-    () => JSON.parse(localStorage.getItem("lufer-lists") || "[]")
-  );
   const [search, setSearch] = useState("");
-  const [url, setUrl] = useState("");
-  const [message, setMessage] = useState("Tu televisión, en un solo lugar.");
   const [loading, setLoading] = useState(false);
+  const [message, setMessage] = useState("Preparando Lufer IPTV V3...");
+  const [favorites, setFavorites] = useState(() => readJSON(LS_FAV, []));
+  const [history, setHistory] = useState(() => readJSON(LS_HISTORY, []));
+  const [savedLists, setSavedLists] = useState(() => readJSON(LS_LISTS, []));
+  const [m3uChannels, setM3uChannels] = useState([]);
+  const [m3uUrl, setM3uUrl] = useState("");
+  const [sidebar, setSidebar] = useState(false);
+  const [seriesDetail, setSeriesDetail] = useState(null);
+  const [seasons, setSeasons] = useState([]);
+  const [episodes, setEpisodes] = useState([]);
 
-  const groups = useMemo(() => {
-    const values = [...new Set(channels.map((c) => c.group || "Sin categoría"))];
-    return values.sort((a, b) => a.localeCompare(b));
-  }, [channels]);
+  useEffect(() => { localStorage.setItem(LS_FAV, JSON.stringify(favorites)); }, [favorites]);
+  useEffect(() => { localStorage.setItem(LS_HISTORY, JSON.stringify(history)); }, [history]);
+  useEffect(() => { localStorage.setItem(LS_LISTS, JSON.stringify(savedLists)); }, [savedLists]);
 
-  const filtered = useMemo(() => {
-    const q = search.toLowerCase().trim();
-    return channels.filter((channel) => {
-      const inGroup = activeGroup === "all" || channel.group === activeGroup;
-      const isFavorite = favorites.has(channel.id);
-      const inFavorites = !showFavorites || isFavorite;
-      const inSearch =
-        !q ||
-        `${channel.name} ${channel.group}`.toLowerCase().includes(q);
-      return inGroup && inFavorites && inSearch;
-    });
-  }, [channels, activeGroup, showFavorites, favorites, search]);
-
-  function toggleFavorite(id) {
-    const next = new Set(favorites);
-    next.has(id) ? next.delete(id) : next.add(id);
-    setFavorites(next);
-    localStorage.setItem("lufer-favorites", JSON.stringify([...next]));
+  async function loadEmby(type) {
+    setLoading(true);
+    setMessage("Cargando catálogo...");
+    try {
+      if (type === "live") setLive(await getLiveChannels());
+      if (type === "movies") setMovies(await getMovies());
+      if (type === "series") setSeries(await getSeries());
+      setMessage("Catálogo actualizado.");
+    } catch (e) {
+      setMessage(e.message || "No fue posible conectar con Emby.");
+    } finally { setLoading(false); }
   }
 
-  function applyChannels(parsed, source) {
-    setChannels(parsed);
-    setSelected(parsed[0] || null);
-    setActiveGroup("all");
-    setShowFavorites(false);
-    setSearch("");
-    setMessage(
-      parsed.length
-        ? `${parsed.length.toLocaleString()} canales disponibles`
-        : `No encontramos canales en ${source}.`
-    );
+  useEffect(() => {
+    if (section === "live" && !live.length) loadEmby("live");
+    if (section === "movies" && !movies.length) loadEmby("movies");
+    if (section === "series" && !series.length) loadEmby("series");
+  }, [section]);
+
+  function isFav(item) { return favorites.includes(item.Id || item.id); }
+  function toggleFav(item) {
+    const id = item.Id || item.id;
+    setFavorites(x => x.includes(id) ? x.filter(v => v !== id) : [...x, id]);
   }
 
-  async function loadFile(event) {
-    const file = event.target.files?.[0];
+  function play(item, kind = "emby") {
+    setSelected({ ...item, kind });
+    const id = item.Id || item.id;
+    const entry = { id, name: item.Name || item.name, type: kind, item };
+    setHistory(x => [entry, ...x.filter(v => v.id !== id)].slice(0, 30));
+  }
+
+  async function openSeries(item) {
+    setSeriesDetail(item);
+    setEpisodes([]);
+    try { setSeasons(await getSeasons(item.Id)); }
+    catch (e) { setMessage(e.message); }
+  }
+
+  async function openSeason(season) {
+    try { setEpisodes(await getEpisodes(seriesDetail.Id, season.Id)); }
+    catch (e) { setMessage(e.message); }
+  }
+
+  async function loadM3UUrl() {
+    if (!m3uUrl.trim()) return;
+    setLoading(true);
+    try { setM3uChannels(await parseM3UUrl(m3uUrl.trim())); setSection("iptv"); }
+    catch (e) { setMessage(e.message || "No se pudo cargar la lista M3U."); }
+    finally { setLoading(false); }
+  }
+
+  async function loadM3UFile(e) {
+    const file = e.target.files?.[0];
     if (!file) return;
-    try {
-      const text = await file.text();
-      applyChannels(parseM3U(text), file.name);
-    } catch {
-      setMessage("No se pudo procesar el archivo M3U.");
-    }
-    event.target.value = "";
+    setM3uChannels(parseM3U(await file.text()));
+    setSection("iptv");
+    e.target.value = "";
   }
 
-  async function loadUrl(event) {
-    event?.preventDefault();
-    const value = url.trim();
-    if (!value) return;
-    setLoading(true);
-    setMessage("Conectando con tu lista...");
-    try {
-      const parsed = await parseM3UUrl(value);
-      applyChannels(parsed, "la URL");
-    } catch (error) {
-      setMessage(error.message || "No se pudo cargar la lista.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const allSearch = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return [];
+    return [
+      ...live.map(x => ({ ...x, _kind: "live" })),
+      ...movies.map(x => ({ ...x, _kind: "movie" })),
+      ...series.map(x => ({ ...x, _kind: "series" })),
+      ...m3uChannels.map(x => ({ ...x, _kind: "iptv", Name: x.name })),
+    ].filter(x => (x.Name || "").toLowerCase().includes(q)).slice(0, 60);
+  }, [search, live, movies, series, m3uChannels]);
 
-  function saveList() {
-    const value = url.trim();
-    if (!value) {
-      setMessage("Pega primero una URL M3U.");
-      return;
-    }
-    const existing = savedLists.find((item) => item.url === value);
-    if (existing) {
-      setMessage(`"${existing.name}" ya está en Mis listas.`);
-      return;
-    }
-    const name = window.prompt(
-      "Nombre de la lista:",
-      `Lista ${savedLists.length + 1}`
-    );
-    if (!name?.trim()) return;
-    const item = {
-      id: crypto.randomUUID(),
-      name: name.trim(),
-      url: value,
-      channels: channels.length,
-    };
-    const next = [...savedLists, item];
-    setSavedLists(next);
-    localStorage.setItem("lufer-lists", JSON.stringify(next));
-    setMessage(`"${item.name}" guardada en Mis listas.`);
-  }
-
-  function deleteList(id) {
-    const item = savedLists.find((list) => list.id === id);
-    if (!item) return;
-    if (!window.confirm(`¿Eliminar "${item.name}"?`)) return;
-    const next = savedLists.filter((list) => list.id !== id);
-    setSavedLists(next);
-    localStorage.setItem("lufer-lists", JSON.stringify(next));
-  }
-
-  async function loadSavedList(item) {
-    setUrl(item.url);
-    setLoading(true);
-    setMessage(`Cargando ${item.name}...`);
-    try {
-      const parsed = await parseM3UUrl(item.url);
-      applyChannels(parsed, item.name);
-      const next = savedLists.map((x) =>
-        x.id === item.id ? { ...x, channels: parsed.length } : x
-      );
-      setSavedLists(next);
-      localStorage.setItem("lufer-lists", JSON.stringify(next));
-    } catch (error) {
-      setMessage(error.message || "No se pudo actualizar esta lista.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function refreshCurrentList() {
-    const current = savedLists.find((item) => item.url === url.trim());
-    if (current) return loadSavedList(current);
-    await loadUrl();
-  }
-
-  const stats = [
-    { value: channels.length.toLocaleString(), label: "Canales" },
-    { value: groups.length.toLocaleString(), label: "Categorías" },
-    { value: favorites.size.toLocaleString(), label: "Favoritos" },
-    { value: savedLists.length.toLocaleString(), label: "Mis listas" },
-  ];
+  const title = {
+    home: "Inicio", live: "TV en vivo", movies: "Películas", series: "Series",
+    iptv: "Mis listas IPTV", favorites: "Mi lista", history: "Continuar viendo"
+  }[section];
 
   return (
-    <div className="app-shell">
-      <Sidebar
-        groups={groups}
-        activeGroup={activeGroup}
-        setActiveGroup={setActiveGroup}
-        favoriteCount={favorites.size}
-        showFavorites={showFavorites}
-        setShowFavorites={setShowFavorites}
-        onFile={loadFile}
-        savedLists={savedLists}
-        onLoadSaved={loadSavedList}
-        onDeleteSaved={deleteList}
-      />
-
-      <main className="main">
-        <header className="topbar">
-          <div className="mobile-brand">
-            <span className="brand-mark">L</span>
-            <span>LUFER IPTV</span>
-          </div>
-          <div className="page-title">
-            <div className="eyebrow">LUFER IPTV · V2</div>
-            <h1>Tu televisión, más simple.</h1>
-            <p>{message}</p>
-          </div>
-          <button className="icon-button" title="Configuración">
-            <Settings2 size={19} />
+    <div className="v3-shell">
+      <aside className={`v3-sidebar ${sidebar ? "open" : ""}`}>
+        <div className="v3-brand"><span>VF</span><b>LUFER IPTV</b><button onClick={() => setSidebar(false)}><X/></button></div>
+        {[
+          ["home","Inicio",Tv],["live","TV en vivo",Tv],["movies","Películas",Film],
+          ["series","Series",ListVideo],["iptv","Mis listas IPTV",ListVideo],
+          ["favorites","Mi lista",Heart],["history","Continuar viendo",Clock3]
+        ].map(([id,label,Icon]) =>
+          <button key={id} className={section===id?"active":""} onClick={()=>{setSection(id);setSidebar(false);}}>
+            <Icon size={18}/>{label}
           </button>
+        )}
+        <label className="v3-upload">＋ Cargar M3U<input hidden type="file" accept=".m3u,.m3u8,text/plain" onChange={loadM3UFile}/></label>
+      </aside>
+
+      <main className="v3-main">
+        <header className="v3-header">
+          <button className="v3-menu" onClick={()=>setSidebar(true)}><Menu/></button>
+          <div><small>LUFER IPTV · V3</small><h1>{title}</h1></div>
+          <div className="v3-search"><Search size={18}/><input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Buscar películas, series o canales..."/></div>
+          <button className="v3-refresh" onClick={()=>loadEmby(section)} disabled={loading}><RefreshCw className={loading?"spin":""}/></button>
         </header>
 
-        {!channels.length ? (
-          <section className="welcome-card">
-            <div className="welcome-copy">
-              <span className="live-pill"><span /> LISTO PARA VER</span>
-              <h2>Empieza tu experiencia IPTV.</h2>
-              <p>
-                Carga una lista M3U, guarda tus listas favoritas y disfruta tus
-                canales desde cualquier navegador compatible.
-              </p>
-              <div className="welcome-actions">
-                <label className="primary-button">
-                  <Upload size={17} />
-                  Cargar archivo M3U
-                  <input
-                    type="file"
-                    accept=".m3u,.m3u8,text/plain"
-                    onChange={loadFile}
-                    hidden
-                  />
-                </label>
-                <a href="#lista" className="secondary-button">
-                  <Link2 size={17} />
-                  Usar una URL
-                </a>
-              </div>
-            </div>
-            <div className="welcome-orb">
-              <div className="orb-ring">
-                <Tv size={46} />
-              </div>
-            </div>
+        {search && <section className="v3-search-results"><h2>Resultados</h2><Cards items={allSearch} onPlay={play} onSeries={openSeries} favorites={favorites} toggleFav={toggleFav}/></section>}
+
+        {!search && section==="home" && <>
+          <section className="v3-hero">
+            <div><span>LUFER IPTV V3</span><h2>Tu entretenimiento en un solo lugar.</h2><p>TV en vivo, películas, series y tus listas IPTV.</p>
+            <div className="v3-actions"><button onClick={()=>setSection("live")}><Play size={17}/> Ver TV en vivo</button><button className="ghost" onClick={()=>setSection("movies")}>Explorar películas</button></div></div>
           </section>
-        ) : (
-          <section className="hero-strip">
-            <div>
-              <span className="live-pill"><span /> EN VIVO</span>
-              <h2>{selected?.name || "Selecciona un canal"}</h2>
-              <p>{selected?.group || "Explora tu programación"}</p>
-            </div>
-            <div className="hero-actions">
-              <button onClick={() => setShowFavorites(true)} title="Favoritos">
-                <Heart size={17} fill={showFavorites ? "currentColor" : "none"} />
-                Favoritos
-              </button>
-              <button onClick={refreshCurrentList} disabled={loading}>
-                <RefreshCw size={16} className={loading ? "spin" : ""} />
-                Actualizar
-              </button>
-            </div>
-          </section>
-        )}
+          <Row title="Continuar viendo" items={history.map(x=>x.item)} onPlay={x=>play(x,"emby")} />
+          <Row title="Películas" items={movies.slice(0,12)} onPlay={x=>play(x,"emby")} favorites={favorites} toggleFav={toggleFav}/>
+        </>}
 
-        <section className="url-box" id="lista">
-          <form onSubmit={loadUrl}>
-            <Link2 size={18} />
-            <input
-              value={url}
-              onChange={(e) => setUrl(e.target.value)}
-              placeholder="Pega aquí la URL de tu lista M3U..."
-              aria-label="URL de lista M3U"
-            />
-            {url && (
-              <button type="button" className="clear-url" onClick={() => setUrl("")}>
-                <X size={16} />
-              </button>
-            )}
-            <button type="submit" disabled={loading}>
-              {loading ? "Cargando..." : "Cargar"}
-            </button>
-            <button
-              type="button"
-              className="save-list-button"
-              onClick={saveList}
-              disabled={!url.trim()}
-            >
-              Guardar
-            </button>
-          </form>
-        </section>
+        {!search && section==="live" && <><Toolbar text={message}/><Cards items={live} onPlay={x=>play(x,"live")} favorites={favorites} toggleFav={toggleFav}/></>}
+        {!search && section==="movies" && <><Toolbar text={message}/><Cards items={movies} onPlay={x=>play(x,"movie")} favorites={favorites} toggleFav={toggleFav}/></>}
+        {!search && section==="series" && !seriesDetail && <><Toolbar text={message}/><Cards items={series} onSeries={openSeries} favorites={favorites} toggleFav={toggleFav}/></>}
+        {!search && section==="series" && seriesDetail && <SeriesDetail item={seriesDetail} seasons={seasons} episodes={episodes} onSeason={openSeason} onPlay={x=>play(x,"episode")} onBack={()=>setSeriesDetail(null)} />}
+        {!search && section==="iptv" && <IPTV channels={m3uChannels} url={m3uUrl} setUrl={setM3uUrl} onLoad={loadM3UUrl} onPlay={x=>play(x,"iptv")} />}
+        {!search && section==="favorites" && <Cards items={[...live,...movies,...series].filter(x=>favorites.includes(x.Id))} onPlay={x=>play(x,"emby")} onSeries={openSeries} favorites={favorites} toggleFav={toggleFav}/>}
+        {!search && section==="history" && <Cards items={history.map(x=>x.item)} onPlay={x=>play(x,"emby")} />}
 
-        <section className="stats-row">
-          {stats.map((stat) => (
-            <div className="stat-card" key={stat.label}>
-              <strong>{stat.value}</strong>
-              <span>{stat.label}</span>
-            </div>
-          ))}
-        </section>
-
-        <section className="content-grid">
-          <div className="player-column">
-            <Player channel={selected} />
-          </div>
-
-          <div className="channels-panel">
-            <div className="list-header">
-              <div>
-                <div className="section-kicker">
-                  {showFavorites ? "TU COLECCIÓN" : "PROGRAMACIÓN"}
-                </div>
-                <h2>
-                  {showFavorites
-                    ? "Favoritos"
-                    : activeGroup === "all"
-                    ? "Todos los canales"
-                    : activeGroup}
-                </h2>
-                <span>{filtered.length.toLocaleString()} canales</span>
-              </div>
-
-              <div className="search-box">
-                <Search size={17} />
-                <input
-                  value={search}
-                  onChange={(e) => setSearch(e.target.value)}
-                  placeholder="Buscar canal..."
-                />
-              </div>
-            </div>
-
-            <ChannelList
-              channels={filtered}
-              favorites={favorites}
-              onFavorite={toggleFavorite}
-              onSelect={setSelected}
-              selected={selected}
-            />
-
-            {filtered.length === 0 && channels.length > 0 && (
-              <div className="empty-search">
-                <Search size={26} />
-                <strong>No encontramos ese canal</strong>
-                <span>Prueba con otro nombre o cambia de categoría.</span>
-              </div>
-            )}
-          </div>
-        </section>
+        {selected && <VideoModal item={selected} onClose={()=>setSelected(null)} />}
       </main>
     </div>
   );
+}
+
+function Toolbar({text}) { return <div className="v3-toolbar"><span>{text}</span></div>; }
+
+function Row({title,items,onPlay,favorites,toggleFav}) {
+  if (!items?.length) return null;
+  return <section className="v3-section"><div className="v3-section-title"><h2>{title}</h2></div><Cards items={items} onPlay={onPlay} favorites={favorites} toggleFav={toggleFav}/></section>;
+}
+
+function Cards({items=[],onPlay,onSeries,favorites=[],toggleFav}) {
+  return <div className="v3-grid">{items.map((x,i)=><article className="v3-card" key={x.Id||x.id||i}>
+    <button className="v3-poster" onClick={()=>x._kind==="series"||(!x.MediaSources&&x.Type==="Series")?onSeries?.(x):onPlay?.(x)}>
+      {x.ImageTags?.Primary || x.PrimaryImageTag || x.image ? <img src={getImageUrl(x)} alt=""/> : <div className="poster-fallback">{x.Name||x.name||"Canal"}</div>}
+      <span className="v3-play"><Play fill="currentColor" size={18}/></span>
+    </button>
+    <div className="v3-card-info"><b>{x.Name||x.name}</b><small>{x.ProductionYear||x.group||x.Type||"TV"}</small></div>
+    {toggleFav && <button className="v3-fav" onClick={()=>toggleFav(x)}><Heart size={17} fill={favorites?.includes(x.Id||x.id)?"currentColor":"none"}/></button>}
+  </article>)}</div>;
+}
+
+function SeriesDetail({item,seasons,episodes,onSeason,onPlay,onBack}) {
+  return <section className="v3-detail"><button onClick={onBack}>← Regresar</button><h2>{item.Name}</h2><div className="season-list">{seasons.map(s=><button key={s.Id} onClick={()=>onSeason(s)}>{s.Name}</button>)}</div><Cards items={episodes} onPlay={onPlay}/></section>;
+}
+
+function IPTV({channels,url,setUrl,onLoad,onPlay}) {
+  return <section><div className="v3-url"><input value={url} onChange={e=>setUrl(e.target.value)} placeholder="URL de lista M3U"/><button onClick={onLoad}>Cargar</button></div><Cards items={channels.map(x=>({...x,Name:x.name,_kind:"iptv"}))} onPlay={onPlay}/></section>;
+}
+
+function VideoModal({item,onClose}) {
+  const videoRef=useRef(null); const [src,setSrc]=useState(""); const [error,setError]=useState("");
+  useEffect(()=>{let hls;
+    (async()=>{try{
+      const url=item.kind==="iptv"?item.item?.url:item.kind==="live"?await getStreamUrl(item.item||item):await getStreamUrl(item.item||item);
+      setSrc(url);
+      if(videoRef.current && Hls.isSupported()){hls=new Hls();hls.loadSource(url);hls.attachMedia(videoRef.current);}
+      else if(videoRef.current) videoRef.current.src=url;
+    }catch(e){setError(e.message||"No se pudo reproducir.");}})();
+    return()=>hls?.destroy();
+  },[item]);
+  return <div className="v3-modal"><div className="v3-player"><button className="v3-close" onClick={onClose}><X/></button>{error?<div className="v3-error">{error}</div>:<video ref={videoRef} controls autoPlay playsInline/>}<div className="v3-player-title">{item.Name||item.name}</div></div></div>;
 }
