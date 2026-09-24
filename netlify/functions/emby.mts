@@ -9,9 +9,7 @@ function getConfig() {
   const EMBY_USER_ID = process.env.EMBY_USER_ID;
 
   if (!EMBY_URL || !EMBY_API_KEY) {
-    throw new Error(
-      "Configura EMBY_URL y EMBY_API_KEY en Netlify."
-    );
+    throw new Error("Configura EMBY_URL y EMBY_API_KEY en Netlify.");
   }
 
   return { EMBY_URL, EMBY_API_KEY, EMBY_USER_ID };
@@ -55,16 +53,14 @@ async function readJson(response) {
 async function getUserId() {
   const { EMBY_USER_ID } = getConfig();
 
-  if (EMBY_USER_ID) {
-    return EMBY_USER_ID;
-  }
+  // No es necesario configurar EMBY_USER_ID.
+  // Si está vacío, usamos automáticamente el primer usuario de Emby.
+  if (EMBY_USER_ID) return EMBY_USER_ID;
 
   const response = await embyFetch("/Users");
 
   if (!response.ok) {
-    throw new Error(
-      `No se pudo obtener el usuario de Emby (${response.status}).`
-    );
+    throw new Error(`No se pudo obtener el usuario de Emby (${response.status}).`);
   }
 
   const users = await readJson(response);
@@ -99,7 +95,6 @@ function sanitizeEmbyPath(path) {
     throw new Error("Ruta de reproducción inválida.");
   }
 
-  // Nunca permitimos que el navegador use este proxy como SSRF.
   if (path.includes("://") || path.startsWith("//")) {
     throw new Error("Destino de reproducción inválido.");
   }
@@ -110,7 +105,6 @@ function sanitizeEmbyPath(path) {
 function removeApiKey(path) {
   const url = new URL(path, "http://local.invalid");
   url.searchParams.delete("api_key");
-
   return `${url.pathname}${url.search}`;
 }
 
@@ -126,7 +120,6 @@ function rewriteHlsPlaylist(text, upstreamUrl) {
     .map((line) => {
       if (!line) return line;
 
-      // URI="audio.m3u8" / URI="segment.ts" dentro de tags HLS.
       line = line.replace(/URI="([^"]+)"/g, (_match, uri) => {
         try {
           const absolute = new URL(uri, upstreamUrl);
@@ -138,7 +131,6 @@ function rewriteHlsPlaylist(text, upstreamUrl) {
         }
       });
 
-      // Líneas de playlist que son URLs/rutas de segmentos o sub-playlists.
       if (!line.startsWith("#")) {
         try {
           const absolute = new URL(line, upstreamUrl);
@@ -164,6 +156,7 @@ function rewriteHlsPlaylist(text, upstreamUrl) {
 async function createPlayback(itemId) {
   const { EMBY_API_KEY } = getConfig();
   const userId = await getUserId();
+  const deviceId = "lufer-iptv-web";
 
   const params = new URLSearchParams({
     UserId: userId,
@@ -172,7 +165,7 @@ async function createPlayback(itemId) {
     MaxStreamingBitrate: "140000000",
     "X-Emby-Client": "Lufer IPTV",
     "X-Emby-Device-Name": "Lufer IPTV Web",
-    "X-Emby-Device-Id": "lufer-iptv-web",
+    "X-Emby-Device-Id": deviceId,
     "X-Emby-Client-Version": "3.0.0",
   });
 
@@ -216,27 +209,51 @@ async function createPlayback(itemId) {
   const source = data?.MediaSources?.[0];
 
   if (!source) {
-    throw new Error(
-      "Emby no devolvió ninguna fuente de reproducción."
-    );
+    throw new Error("Emby no devolvió ninguna fuente de reproducción.");
   }
 
-  // Preferimos la URL HLS que Emby genera para el cliente.
-  let playbackPath =
-    source.TranscodingUrl ||
-    source.DirectStreamUrl ||
-    "";
+  /*
+   * Lufer IPTV usa hls.js. Por eso siempre devolvemos una URL HLS.
+   * Esto evita que hls.js intente interpretar un MP4/TS directo
+   * como si fuera un manifiesto HLS.
+   */
 
-  if (!playbackPath && source.LiveStreamId) {
+  let playbackPath = "";
+
+  // TV en vivo: endpoint HLS específico de Emby.
+  if (source.LiveStreamId) {
     playbackPath =
       `/LiveTv/LiveStreamFiles/${encodeURIComponent(
         source.LiveStreamId
       )}/hls/master.m3u8`;
   }
 
+  // Si Emby ya nos dio una URL HLS, usamos esa.
+  else if (
+    source.TranscodingUrl &&
+    /\.m3u8(?:$|\?)/i.test(source.TranscodingUrl)
+  ) {
+    playbackPath = source.TranscodingUrl;
+  }
+
+  // Películas / series / episodios: generamos el endpoint HLS oficial.
+  else if (source.Id) {
+    const hlsParams = new URLSearchParams({
+      MediaSourceId: source.Id,
+      DeviceId: deviceId,
+      UserId: userId,
+      MaxStreamingBitrate: "140000000",
+    });
+
+    playbackPath =
+      `/Videos/${encodeURIComponent(
+        itemId
+      )}/master.m3u8?${hlsParams.toString()}`;
+  }
+
   if (!playbackPath) {
     throw new Error(
-      "Emby devolvió la fuente, pero no una URL reproducible."
+      "Emby devolvió la fuente, pero no una URL HLS reproducible."
     );
   }
 
@@ -245,7 +262,7 @@ async function createPlayback(itemId) {
     getConfig().EMBY_URL + "/"
   );
 
-  // La API key nunca se entrega al navegador.
+  // Nunca exponemos la API key al navegador.
   absolute.searchParams.delete("api_key");
 
   return {
@@ -254,14 +271,15 @@ async function createPlayback(itemId) {
     ),
     playSessionId: data?.PlaySessionId || null,
     liveStreamId: source?.LiveStreamId || null,
-    protocol: source?.TranscodingSubProtocol || source?.Protocol || null,
-    container:
-      source?.TranscodingContainer || source?.Container || null,
+    protocol: "hls",
+    container: "ts",
   };
 }
 
 async function handleProxy(request, encodedPath) {
-  const path = sanitizeEmbyPath(decodeBase64Url(encodedPath));
+  const path = sanitizeEmbyPath(
+    decodeBase64Url(encodedPath)
+  );
 
   const incomingRange = request.headers.get("range");
 
@@ -279,7 +297,8 @@ async function handleProxy(request, encodedPath) {
   });
 
   const contentType =
-    upstream.headers.get("content-type") || "application/octet-stream";
+    upstream.headers.get("content-type") ||
+    "application/octet-stream";
 
   if (!upstream.ok) {
     const text = await upstream.text();
@@ -302,8 +321,10 @@ async function handleProxy(request, encodedPath) {
   if (isHls) {
     const playlist = await upstream.text();
 
-    // Construimos la URL real de Emby para resolver referencias relativas.
-    const upstreamUrl = makeEmbyUrl(path, getConfig().EMBY_API_KEY);
+    const upstreamUrl = makeEmbyUrl(
+      path,
+      getConfig().EMBY_API_KEY
+    );
 
     const rewritten = rewriteHlsPlaylist(
       playlist,
@@ -334,7 +355,10 @@ async function handleProxy(request, encodedPath) {
     "last-modified",
   ]) {
     const value = upstream.headers.get(name);
-    if (value) responseHeaders.set(name, value);
+
+    if (value) {
+      responseHeaders.set(name, value);
+    }
   }
 
   return new Response(upstream.body, {
@@ -348,7 +372,10 @@ export default async (request) => {
     getConfig();
 
     const url = new URL(request.url);
-    const route = url.pathname.replace(/^\/api\/emby\/?/, "");
+    const route = url.pathname.replace(
+      /^\/api\/emby\/?/,
+      ""
+    );
 
     if (request.method === "OPTIONS") {
       return new Response(null, {
@@ -361,38 +388,63 @@ export default async (request) => {
       });
     }
 
-    const streamMatch = route.match(/^stream\/([^/]+)$/);
+    const streamMatch =
+      route.match(/^stream\/([^/]+)$/);
 
-    if (streamMatch && request.method === "GET") {
+    if (
+      streamMatch &&
+      request.method === "GET"
+    ) {
       const result = await createPlayback(
         decodeURIComponent(streamMatch[1])
       );
 
-      return new Response(JSON.stringify(result), {
-        status: 200,
-        headers: jsonHeaders,
-      });
+      return new Response(
+        JSON.stringify(result),
+        {
+          status: 200,
+          headers: jsonHeaders,
+        }
+      );
     }
 
-    const proxyMatch = route.match(/^proxy$/);
+    const proxyMatch =
+      route.match(/^proxy$/);
 
-    if (proxyMatch && request.method === "GET") {
-      const encodedPath = url.searchParams.get("path");
+    if (
+      proxyMatch &&
+      request.method === "GET"
+    ) {
+      const encodedPath =
+        url.searchParams.get("path");
 
       if (!encodedPath) {
         return new Response(
-          JSON.stringify({ error: "Falta el parámetro path." }),
-          { status: 400, headers: jsonHeaders }
+          JSON.stringify({
+            error: "Falta el parámetro path.",
+          }),
+          {
+            status: 400,
+            headers: jsonHeaders,
+          }
         );
       }
 
-      return handleProxy(request, encodedPath);
+      return handleProxy(
+        request,
+        encodedPath
+      );
     }
 
-    const imageMatch = route.match(/^image\/([^/]+)$/);
+    const imageMatch =
+      route.match(/^image\/([^/]+)$/);
 
-    if (imageMatch && request.method === "GET") {
-      const tag = url.searchParams.get("tag");
+    if (
+      imageMatch &&
+      request.method === "GET"
+    ) {
+      const tag =
+        url.searchParams.get("tag");
 
       let path =
         `/Items/${encodeURIComponent(
@@ -403,43 +455,79 @@ export default async (request) => {
         path += `?tag=${encodeURIComponent(tag)}`;
       }
 
-      const upstream = await embyFetch(path, {
-        headers: { Accept: "image/*,*/*" },
-      });
+      const upstream =
+        await embyFetch(path, {
+          headers: {
+            Accept: "image/*,*/*",
+          },
+        });
 
-      const headers = new Headers({
-        "cache-control": "public, max-age=3600",
-        "access-control-allow-origin": "*",
-      });
+      const headers =
+        new Headers({
+          "cache-control":
+            "public, max-age=3600",
+          "access-control-allow-origin":
+            "*",
+        });
 
-      const contentType = upstream.headers.get("content-type");
-      if (contentType) headers.set("content-type", contentType);
+      const contentType =
+        upstream.headers.get(
+          "content-type"
+        );
 
-      return new Response(upstream.body, {
-        status: upstream.status,
-        headers,
-      });
+      if (contentType) {
+        headers.set(
+          "content-type",
+          contentType
+        );
+      }
+
+      return new Response(
+        upstream.body,
+        {
+          status: upstream.status,
+          headers,
+        }
+      );
     }
 
-    // Resto de la API de catálogo: se mantiene como proxy JSON.
-    const params = new URLSearchParams(url.search);
+    const params =
+      new URLSearchParams(url.search);
+
     params.delete("api_key");
 
     const upstreamPath =
-      `/${route}${params.toString() ? `?${params.toString()}` : ""}`;
+      `/${route}${
+        params.toString()
+          ? `?${params.toString()}`
+          : ""
+      }`;
 
-    const upstream = await embyFetch(upstreamPath, {
-      headers: { Accept: "application/json" },
-    });
+    const upstream =
+      await embyFetch(
+        upstreamPath,
+        {
+          headers: {
+            Accept: "application/json",
+          },
+        }
+      );
 
-    const data = await readJson(upstream);
+    const data =
+      await readJson(upstream);
 
-    return new Response(JSON.stringify(data), {
-      status: upstream.status,
-      headers: jsonHeaders,
-    });
+    return new Response(
+      JSON.stringify(data),
+      {
+        status: upstream.status,
+        headers: jsonHeaders,
+      }
+    );
   } catch (error) {
-    console.error("Lufer IPTV Emby function:", error);
+    console.error(
+      "Lufer IPTV Emby function:",
+      error
+    );
 
     return new Response(
       JSON.stringify({
